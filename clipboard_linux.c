@@ -33,6 +33,7 @@ int (*P_XGetWindowProperty) (Display*, Window, Atom, long, long, Bool, Atom, Ato
 void (*P_XFree) (void*);
 void (*P_XDeleteProperty) (Display*, Window, Atom);
 void (*P_XConvertSelection)(Display*, Atom, Atom, Atom, Window, Time);
+int (*P_XPending)(Display* display);
 
 int initX11() {
 	if (libX11) {
@@ -56,6 +57,7 @@ int initX11() {
 	P_XFree = (void (*)(void*)) dlsym(libX11, "XFree");
 	P_XDeleteProperty = (void (*)(Display*, Window, Atom)) dlsym(libX11, "XDeleteProperty");
 	P_XConvertSelection = (void (*)(Display*, Atom, Atom, Atom, Window, Time)) dlsym(libX11, "XConvertSelection");
+	P_XPending = (int (*)(Display*)) dlsym(libX11, "XPending");
 	return 1;
 }
 
@@ -125,10 +127,25 @@ int clipboard_write(char *typ, unsigned char *buf, size_t n, uintptr_t handle) {
     XEvent event;
     XSelectionRequestEvent* xsr;
     int notified = 0;
+    struct timeval tv;
+    fd_set in_fds;
+    int x11_fd = ConnectionNumber(d);
     for (;;) {
         if (notified == 0) {
             syncStatus(handle, 1); // notify Go side
             notified = 1;
+        }
+
+        while(!(*P_XPending)(d)) {
+            FD_ZERO(&in_fds);
+            FD_SET(x11_fd, &in_fds);
+
+            tv.tv_usec = 0;
+            tv.tv_sec = 1;
+
+            if(select(x11_fd+1, &in_fds, NULL, NULL, &tv) == 0) {
+                return 0;
+            }
         }
 
         (*P_XNextEvent)(d, &event);
